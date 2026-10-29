@@ -651,6 +651,164 @@ test('stringify()', function (t) {
         st.end();
     });
 
+    t.test('does not crash on null/undefined entries in arrayFormat=comma with encodeValuesOnly', function (st) {
+        st.doesNotThrow(
+            function () { qs.stringify({ a: [null, 'b'] }, { arrayFormat: 'comma', encodeValuesOnly: true }); },
+            'does not pass a raw null array entry to the encoder'
+        );
+        st.doesNotThrow(
+            function () { qs.stringify({ a: [undefined, 'b'] }, { arrayFormat: 'comma', encodeValuesOnly: true }); },
+            'does not pass a raw undefined array entry to the encoder'
+        );
+        st.doesNotThrow(
+            function () { qs.stringify({ a: [null] }, { arrayFormat: 'comma', encodeValuesOnly: true }); },
+            'does not crash on a single-null array'
+        );
+
+        st.equal(
+            qs.stringify({ a: [null, 'b'] }, { arrayFormat: 'comma', encodeValuesOnly: true }),
+            'a=,b',
+            'null entry joins as empty, comma stays unencoded under encodeValuesOnly'
+        );
+        st.equal(
+            qs.stringify({ a: [undefined, 'b'] }, { arrayFormat: 'comma', encodeValuesOnly: true }),
+            'a=,b',
+            'undefined entry joins as empty, comma stays unencoded under encodeValuesOnly'
+        );
+        st.equal(
+            qs.stringify({ a: [null] }, { arrayFormat: 'comma', encodeValuesOnly: true }),
+            'a=',
+            'single-null array stringifies as empty value'
+        );
+        st.equal(
+            qs.stringify({ a: [null] }, { arrayFormat: 'comma', encodeValuesOnly: true, strictNullHandling: true }),
+            'a',
+            'strictNullHandling drops the equals sign for a single-null array'
+        );
+        st.equal(
+            qs.stringify({ a: [null] }, { arrayFormat: 'comma', encodeValuesOnly: true, skipNulls: true }),
+            '',
+            'skipNulls drops a single-null array entirely'
+        );
+
+        st.end();
+    });
+
+    t.test('arrayFormat=comma: does not crash on entries with no callable `toString`', function (st) {
+        var json = JSON.parse('{ "a": ["b", { "toString": "x" }, "c"] }');
+        st.equal(qs.stringify(json, { arrayFormat: 'comma' }), 'a=b%2C%5Bobject%20Object%5D%2Cc', 'JSON own `toString`');
+        st.equal(qs.stringify(json, { arrayFormat: 'comma', encode: false }), 'a=b,[object Object],c', 'with encode: false');
+        st.equal(
+            qs.stringify(json, { arrayFormat: 'comma', encodeValuesOnly: true }),
+            'a=b,%5Bobject%20Object%5D,c',
+            'with encodeValuesOnly'
+        );
+        st.equal(
+            qs.stringify(JSON.parse('{ "a": [{ "toString": "x" }] }'), { arrayFormat: 'comma', commaRoundTrip: true }),
+            'a%5B%5D=%5Bobject%20Object%5D',
+            'with commaRoundTrip'
+        );
+        st.equal(
+            qs.stringify(JSON.parse('{ "a": [{ "toString": "x" }] }'), { arrayFormat: 'comma' }),
+            qs.stringify({ a: [{ b: 1 }] }, { arrayFormat: 'comma' }),
+            'renders the same as a plain object entry'
+        );
+
+        st.equal(
+            qs.stringify(qs.parse('a[][b]=c', { plainObjects: true }), { arrayFormat: 'comma' }),
+            'a=%5Bobject%20Object%5D',
+            'null-prototype entry from `parse` with plainObjects'
+        );
+        st.equal(
+            qs.stringify(qs.parse('a[][b]=c', { plainObjects: true }), { arrayFormat: 'comma', encodeValuesOnly: true }),
+            'a=%5Bobject%20Object%5D',
+            'null-prototype entry from `parse` with plainObjects, with encodeValuesOnly'
+        );
+        st.equal(
+            qs.stringify(qs.parse('a[0][toString]=x', { allowPrototypes: true }), { arrayFormat: 'comma' }),
+            'a=%5Bobject%20Object%5D',
+            'own `toString` entry from `parse` with allowPrototypes'
+        );
+
+        var nested = JSON.parse('{ "a": [[1, [{ "toString": "x" }]], "y"] }');
+        st.equal(qs.stringify(nested, { arrayFormat: 'comma', encode: false }), 'a=1,[object Object],y', 'nested array');
+        // with encodeValuesOnly, this version encodes each top-level entry before joining, so a nested array's commas are encoded
+        st.equal(
+            qs.stringify(nested, { arrayFormat: 'comma', encodeValuesOnly: true }),
+            'a=1%2C%5Bobject%20Object%5D,y',
+            'nested array, with encodeValuesOnly'
+        );
+        st.equal(qs.stringify({ a: [[1, 2], 3] }, { arrayFormat: 'comma', encode: false }), 'a=1,2,3', 'nested array is still flattened');
+
+        var cyclic = [{ toString: 'x' }];
+        cyclic[cyclic.length] = cyclic;
+        st.equal(
+            qs.stringify({ a: cyclic }, { arrayFormat: 'comma', encode: false }),
+            'a=[object Object],[object Object],',
+            'cyclic nested array joins its cycle as empty'
+        );
+
+        var customJoin = [{ toString: 'x' }];
+        customJoin.join = function () { return 'j'; };
+        // older engines (eg, node 0.6) never call an array's own `join` when converting it to a string
+        var probe = [];
+        probe.join = function () { return 'j'; };
+        var toStringUsesJoin = String(probe) === 'j';
+        st.equal(
+            qs.stringify({ a: [customJoin, 'y'] }, { arrayFormat: 'comma', encode: false }),
+            toStringUsesJoin ? 'a=j,y' : 'a=[object Object],y',
+            'own `join` is still used'
+        );
+
+        st.equal(
+            qs.stringify({ a: [{ toString: 'x', valueOf: function () { return 7; } }] }, { arrayFormat: 'comma' }),
+            'a=7',
+            'primitive `valueOf` is still used'
+        );
+        st.equal(
+            qs.stringify({ a: [{ toString: 'x', valueOf: function () { return null; } }] }, { arrayFormat: 'comma' }),
+            'a=null',
+            'null `valueOf` is still used'
+        );
+        st.equal(
+            qs.stringify({ a: [{ toString: 'x', valueOf: function () { return {}; } }] }, { arrayFormat: 'comma' }),
+            'a=%5Bobject%20Object%5D',
+            'non-primitive `valueOf` falls back'
+        );
+
+        st.equal(
+            qs.stringify({ a: [{ toString: function () { return 't'; } }, new Date(0)] }, { arrayFormat: 'comma', encode: false }),
+            'a=t,1970-01-01T00:00:00.000Z',
+            'callable `toString` and dates are unaffected'
+        );
+
+        st['throws'](
+            function () {
+                qs.stringify({ a: [{ toString: function () { throw new SyntaxError('mine'); } }] }, { arrayFormat: 'comma' });
+            },
+            SyntaxError,
+            'a throwing `toString` still throws'
+        );
+        st['throws'](
+            function () {
+                qs.stringify({ a: [{ toString: 'x', valueOf: function () { throw new EvalError('mine'); } }] }, { arrayFormat: 'comma' });
+            },
+            EvalError,
+            'a throwing `valueOf` still throws'
+        );
+
+        st.end();
+    });
+
+    t.test('arrayFormat=comma: entries with `Symbol.toPrimitive` are unaffected', { skip: !hasSymbols() || typeof Symbol.toPrimitive !== 'symbol' }, function (st) {
+        var entry = { toString: 'x' };
+        entry[Symbol.toPrimitive] = function () { return 'p'; };
+        st.equal(qs.stringify({ a: [entry] }, { arrayFormat: 'comma' }), 'a=p');
+        st.equal(qs.stringify({ a: [entry] }, { arrayFormat: 'comma', encodeValuesOnly: true }), 'a=p');
+
+        st.end();
+    });
+
     t.test('stringifies a null object', { skip: !hasProto }, function (st) {
         st.equal(qs.stringify({ __proto__: null, a: 'b' }), 'a=b');
         st.end();
@@ -715,6 +873,33 @@ test('stringify()', function (t) {
     t.test('stringifies buffer values', function (st) {
         st.equal(qs.stringify({ a: SaferBuffer.from('test') }), 'a=test');
         st.equal(qs.stringify({ a: { b: SaferBuffer.from('test') } }), 'a%5Bb%5D=test');
+        st.end();
+    });
+
+    t.test('does not throw on a non-callable `constructor.isBuffer` key', function (st) {
+        var input = { a: { constructor: { isBuffer: 'x' } } };
+        st.doesNotThrow(function () { qs.stringify(input); });
+        st.equal(qs.stringify(input), 'a%5Bconstructor%5D%5BisBuffer%5D=x');
+        st.equal(qs.stringify({ a: { constructor: { isBuffer: { b: 'c' } } } }), 'a%5Bconstructor%5D%5BisBuffer%5D%5Bb%5D=c');
+        st.equal(qs.stringify({ a: { constructor: { isBuffer: ['b'] } } }), 'a%5Bconstructor%5D%5BisBuffer%5D%5B0%5D=b');
+        st.equal(qs.stringify({ a: { constructor: { isBuffer: true } } }), 'a%5Bconstructor%5D%5BisBuffer%5D=true');
+        st.end();
+    });
+
+    t.test('round-trips a parsed `constructor[isBuffer]` key', function (st) {
+        var str = 'x%5Bconstructor%5D%5BisBuffer%5D=y';
+
+        var plain = qs.parse(str, { plainObjects: true });
+        st.deepEqual(plain, { __proto__: null, x: { __proto__: null, constructor: { __proto__: null, isBuffer: 'y' } } }, 'plainObjects keeps the key');
+        st.doesNotThrow(function () { qs.stringify(plain); });
+        st.equal(qs.stringify(plain), str, 'plainObjects round-trips');
+
+        var proto = qs.parse(str, { allowPrototypes: true });
+        st.deepEqual(proto, { x: { constructor: { isBuffer: 'y' } } }, 'allowPrototypes keeps the key');
+        st.doesNotThrow(function () { qs.stringify(proto); });
+        st.equal(qs.stringify(proto), str, 'allowPrototypes round-trips');
+
+        st.equal(qs.stringify(qs.parse(str)), '', 'default options drop the key');
         st.end();
     });
 
