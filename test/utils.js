@@ -376,11 +376,32 @@ test('isBuffer()', function (t) {
     var fakeBuffer = { constructor: Buffer };
     t.equal(utils.isBuffer(fakeBuffer), false, 'fake buffer is not a buffer');
 
+    forEach(['x', 1, true, {}, [], { isBuffer: true }], function (notCallable) {
+        var obj = { constructor: { isBuffer: notCallable } };
+        t.doesNotThrow(function () { utils.isBuffer(obj); }, 'non-callable `constructor.isBuffer` (' + inspect(notCallable) + ') does not throw');
+        t.equal(utils.isBuffer(obj), false, 'non-callable `constructor.isBuffer` (' + inspect(notCallable) + ') is not a buffer');
+    });
+
+    var nullObject = { __proto__: null, constructor: { __proto__: null, isBuffer: 'y' } };
+    t.equal(utils.isBuffer(nullObject), false, 'null object with non-callable `constructor.isBuffer` is not a buffer');
+
+    var duckBuffer = { constructor: { isBuffer: function () { return true; } } };
+    t.equal(utils.isBuffer(duckBuffer), true, 'callable `constructor.isBuffer` is still honored');
+
     var saferBuffer = SaferBuffer.from('abc');
     t.equal(utils.isBuffer(saferBuffer), true, 'SaferBuffer instance is a buffer');
 
     var buffer = Buffer.from && Buffer.alloc ? Buffer.from('abc') : new Buffer('abc');
     t.equal(utils.isBuffer(buffer), true, 'real Buffer instance is a buffer');
+    t.end();
+});
+
+test('encode()', function (t) {
+    t.equal(utils.encode(JSON.parse('{ "toString": "x" }')), '%5Bobject%20Object%5D', 'object with a non-callable own `toString` does not throw');
+    t.equal(utils.encode(Object.create(null)), '%5Bobject%20Object%5D', 'null-prototype object does not throw');
+    t.equal(utils.encode({ toString: 'x', valueOf: function () { return 7; } }), '7', 'primitive `valueOf` is still used');
+    t.equal(utils.encode(['a', JSON.parse('{ "toString": "x" }')]), 'a%2C%5Bobject%20Object%5D', 'array entry with a non-callable `toString` does not throw');
+    t.equal(utils.encode({ toString: function () { return 'b c'; } }), 'b%20c', 'callable `toString` is unaffected');
     t.end();
 });
 
